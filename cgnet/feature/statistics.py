@@ -614,6 +614,104 @@ class GeometryStatistics():
                 "features must be description string or list of tuples.")
 
 
+class ResidueStatistics(GeometryStatistics):
+    """Child class of GeometryStatistics that calculates statistics on a
+    residue basis
+
+    Parameters
+    ----------
+    encoded_residues : np.array
+        array of ints with shape [n_examples, n_residues], where
+        each integer corresponds to a residue according to
+        the supplied residue encoding dicitonary
+    beads_per_residue: int or np.array
+        Specifies how many beads per residue or, if the CG mapping is
+        not the same for each residue, specifies the mapping of beads
+        to local, residue-level labels. For example, a two residue
+        molecule with 5 beads in the first residue (N, CA, CB, C, O)
+        and 3 beads in the second residue (CA, CB, O) might have
+        the following beads_per_residue array:
+
+        beads_per_residue = [0, 1, 2, 3, 4, 1, 2, 4]
+    beta : float
+        inverse temperature, (1/kB*T)
+    """
+
+    def __init__(self, encoded_residues, beads_per_residue, beta=1.0)
+        #super(ResidueStatistics, self).__init__(*args, **kwargs) -- No super for now #
+
+        self.encoded_residues = encoded_residues
+        self.num_residues = len(encoded_residues)
+        self.beta = beta
+        if isinstance(beads_per_residue, int):
+            self.beads_per_residue = np.tile(np.arange(beads_per_residue),
+                                         self.num_residues)
+        else:
+            self.beads_per_residue = beads_per_residue
+
+
+    def get_stats(self, data, bead_array):
+        """ All bead tuples need to be the same length
+
+        Parameters
+        ----------
+        data: np.array
+            input features, of shape [n_examples, n_features]
+        bead_array : np.array
+            input array of beads of shape [n_examples, n_features,
+            n_beads_per_feature]. As such, all features must have
+            the same number of beads. The use of numpy arrays in
+            place of tuples allows for some vectorized operations.
+
+        """
+        if data.shape != bead_array.shape:
+            raise ValueError("data and bead_tuples must have the "
+                             "the same shape")
+
+        # first, we need to label the residue of each bead:
+        residues = self.encoded_residues[:, bead_array]
+
+        # second, we need to change the raw beads into residue-local beads
+        local_beads = self.beads_per_residue[:, bead_array]
+
+        #need something like (local beads, residues) for final labels
+        final_labels = np.concatenate(local_beads, final_beads, axis=1)
+
+        # Next, we assemble the statistics dictionary
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                residue_key = tuple(final_labels[i,j,:])
+                if residue_key not in stats_dict.keys():
+                    stats_dict[residue_key] = {}
+                    stats_dict[residue_key]['mean'] = 0
+                    stats_dict[residue_key]['std'] = 0
+                    stats_dict[residue_key]['var'] = 0
+                    stats_dict[residue_key]['k'] = 0
+                    stats_dict[residue_key]['observations'] = 0
+
+                stats_dict[residue_key]['mean'] += data[i,j]
+                stats_dict[residue_key]['observations'] += 1
+        #compute final means
+        for residue_key in stats_dict.keys():
+            stats_dict[residue_key]['mean'] /= stats_dict[residue_key]['observations']
+
+        #variance calulcation - maybe update with Welford's algorithm if too slow
+        for i in range(data.shape[0]):
+            for j in range(data.shape[1]):
+                residue_key = tuple(final_labels[i,j,:])
+                stats_dict[residue_key]['var'] += (data[i,j]
+                    - stats_dict[residue_key]['mean'])**2
+        #final vars , stds, and k       
+        for residue_key in stats_dict.keys():
+            stats_dict[residue_key]['var'] /= stats_dict[residue_key]['observations']
+            if stats_dict[residue_key]['var'] == 0:
+                warnings.warn("variance is zero for key {}. Check to see if there is only one observation of "
+                              "this feature value.".format(residue_key))
+            stats_dict[residue_key]['std'] = np.sqrt(stats_dict[residue_key]['var'])
+            stats_dict[residue_key]['k'] = 1.0/stats_dict[residue_key]['var']/self.beta
+        return stats_dict
+
+
 def kl_divergence(dist_1, dist_2):
     r"""Compute the Kullback-Leibler (KL) divergence between two discrete
     distributions according to:
