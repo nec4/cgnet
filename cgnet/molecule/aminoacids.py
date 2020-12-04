@@ -19,13 +19,16 @@ RESIDUE_RADII = {
                 'ALA': 0.1845, 'ARG': 0.3134,
                 'ASN': 0.2478, 'ASP': 0.2335,
                 'CYS': 0.2276, 'GLN': 0.2733,
-                'GLU': 0.2639, 'GLY': 0.0000,
+                'GLU': 0.2639, 'GLY': 0.1,
                 'HIS': 0.2836, 'ILE': 0.2890,
                 'LEU': 0.2887, 'LYS': 0.2938,
                 'MET': 0.2916, 'PHE': 0.3140,
                 'PRO': 0.2419, 'SER': 0.1936,
                 'THR': 0.2376, 'TRP': 0.3422,
-                'TYR': 0.3169, 'VAL': 0.2620
+                'TYR': 0.3169, 'VAL': 0.2620,
+                'CA' : 0.17, 'C' : 0.17,
+                "N" : 0.1625,
+                'H' : 0.1,  "O" : 0.15
                 }
 
 # masses are reported in AMUS
@@ -39,49 +42,40 @@ RESIDUE_MASSES = {
                 'MET':  149.2124, 'PHE':  165.1900,
                 'PRO':  115.1310, 'SER':  105.0930,
                 'THR':  119.1197, 'TRP':  204.2262,
-                'TYR':  181.1894, 'VAL':  117.1469
+                'TYR':  181.1894, 'VAL':  117.1469,
+                'CA' : 12.00, "H" : 1.00,
+                'N' : 14.00, 'O' : 16.00
                 }
 
 
-def calculate_hard_sphere_minima(bead_pairs, cgmolecule, units='Angstroms',
-                                 prefactor=0.7):
+def calculate_hard_sphere_minima(bead_pairs, radii_dictionary,
+                                 units='Angstroms', prefactor=0.7,
+                                 prefactor_ignore=None):
     """This function uses amino acid radii to calculate a minimum contact
-    distance between atoms in a CGMolecule in either Angstroms or nanometers.
-    Both glycine-glycine pairs and atoms in the same residue will return
-    a distance of zero (the latter will also raise a warning). See also Notes,
-    below.
+    distance between beads in a CGMolecule given a dictionary of input radii.
 
     Parameters
     ----------
     bead_pairs : list of two-element tuples
-        Each tuple contains the two atom indices in the coarse-grained for
-        which a mininum distance should be calculated.
-    cgmolecule : cgnet.molecule.CGMolecule instance
-        An initialized CGMolecule object.
-    units : 'Angstroms' or 'nanometers' (default='Angstroms')
-        The unit in which the minimum distances should be returned
+        Each tuple contains the two atom labels in the coarse-grained
+        representation for which a mininum distance should be calculated.
+    radii_dictionary : dictionary
+        Dictionary that encodes bead type radii. The keys are integers that
+        are found in bead_pairs, while the corresponding values are radii of
+        those bead types
     prefactor : float (default=0.7)
         Factor by which each atomic radii should be multiplied.
         The default of 0.7 is inspired by reference [1].
+    prefactor_ignore: list (default=None)
+        List of specific bead types for which no prefactor will be applied. One
+        might use this, for example, to preserve the radii of non CG backbone
+        beads.
 
     Returns
     -------
     hard_sphere_minima : list of floats
         Each element contains the minimum hard sphere distance corresponding
         to the same index in the input list of bead_pairs
-
-    Notes
-    -----
-    This method does NOT take into account the identity of the atom in the 
-    residue. In other words, the CA-CA, CA-CB, CB-CB, etc. distances will all
-    be identical between two residues. In the example provided below, the
-    hard_sphere_minima output will be a list of two identical distances.
-
-    This method does NOT account for distances between atoms within the same
-    residue (i.e., the same residue index). These distances will be returned
-    as zero and a warning will be raised. If you are using this method to 
-    populate a repulsion prior, consider applying harmonic priors to such
-    intra-residue distances.
 
     References
     ----------
@@ -90,49 +84,28 @@ def calculate_hard_sphere_minima(bead_pairs, cgmolecule, units='Angstroms',
         formation in the protein folding problem. J. Phys. Chem. B.
         https://doi.org/10.1021/jp034441r
 
-    Example
-    -------
-    names = ['CA', 'CB', 'CA', 'CB']
-    resseq = [1, 1, 2, 2]
-    resmap = {1 : 'ALA', 2 : 'PHE'}
-
-    dipeptide = CGMolecule(names, resseq, resmap)
-
-    # Our CA-CA distance is (0, 2), and our CB-CB distance is (1, 3)
-    hard_sphere_minima = calculate_hard_sphere_minima([(0, 2), (1, 3)],
-                                                       dipeptide)
-
-    # Note that in this example, hard_sphere_minima will have two entries
-    # with the same distance
     """
-    if units.lower() not in ['angstroms', 'nanometers']:
-        raise ValueError("units must Angstroms or nanometers")
+    if prefactor_ignore is None:
+        prefactor_ignore = []
+    prefactors = []
+    for bead_pair in bead_pairs:
+        b1, b2 = bead_pair
+        if b1 in prefactor_ignore:
+            p1 = 1.0
+        else:
+            p1 = prefactor
 
-    resmap = cgmolecule.resmap
-    resseq = cgmolecule.resseq
-    if units.lower() == 'angstroms':
-        residue_radii = {k : 10*v for k, v in RESIDUE_RADII.items()}
-    else:
-        residue_radii = RESIDUE_RADII
+        if b2 in prefactor_ignore:
+            p2 = 1.0
+        else:
+            p2 = prefactor
+        prefactors.append((p1, p2))
 
-    # Calculate the distance unless the residue indices are the same,
-    # in which case use a nan instead. We go through nans because we
-    # want to provide the user with the problematic indices, and zeros
-    # aren't unique because a GLY-GLY pair would also return a zero
-    # even for different residue indices.
     hard_sphere_minima = np.array(
-                    [(prefactor*residue_radii[resmap[resseq[b1]]] +
-                    prefactor*residue_radii[resmap[resseq[b2]]])
-                    if resseq[b1] != resseq[b2] else np.nan
-                    for b1, b2 in bead_pairs]
+                    [(p1*radii_dictionary[b1] +
+                    p2*radii_dictionary[b2])
+                    for (b1, b2), (p1, p2) in zip(bead_pairs, prefactors)]
                     )
-
-    nan_indices = np.where(np.isnan(hard_sphere_minima))[0]
-    if len(nan_indices) > 0:
-        warnings.warn("The following bead pairs were in the same residue. Their "
-                      "minima were set to zero: {}".format(
-                      [bead_pairs[ni] for ni in nan_indices]))
-        hard_sphere_minima[nan_indices] = 0.
 
     hard_sphere_minima = [np.round(dist, 4) for dist in hard_sphere_minima]
 

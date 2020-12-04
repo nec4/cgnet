@@ -544,7 +544,7 @@ class GeometryStatistics():
 
         return zscore_array, zscore_keys
 
-    def return_indices(self, features):
+    def return_indices(self, features, local=False):
         """Return all indices for specified feature type. Useful for
         constructing priors or other layers that make callbacks to
         a subset of features output from a GeometryFeature()
@@ -558,6 +558,11 @@ class GeometryStatistics():
             specifies for which feature type the indices should be returned.
             If tuple input, the indices corresponding to those bead groups
             will be returned instead.
+        local = bool (default=False)
+            if True, the indices will start from the zero position of the
+            corresponding feature type. Note, that if this option is True,
+            all of the input feature tuples must be of the same type, i.e.
+            either all bead triplets, or all bead doublets, etc.
 
         Returns
         -------
@@ -570,6 +575,38 @@ class GeometryStatistics():
         Dihedral features must specify 'cos' or 'sin', e.g. (1, 2, 3, 4, 'sin')
 
         """
+        if local:
+            tuple_len = len(features[0])
+            if np.any([len(feature) > tuple_len for feature in features]):
+                raise ValueError("When 'local' is specfied, all features "
+                                 "must have the same length.")
+            if tuple_len == 4:
+                raise ValueError("Dihedrals must include either 'sin' or "
+                                 "'cos' as a fifth tuple element.")
+            if tuple_len > 5:
+                raise RuntimeError("Only distances, angles, and dihedrals "
+                                   "can be used with the 'local' kawrg "
+                                   "currently.")
+            if tuple_len == 2:
+                return [ind for ind, feat in
+                        enumerate(self.descriptions["Distances"])
+                        if feat in features]
+
+            if tuple_len == 3:
+                return [ind for ind, feat in
+                        enumerate(self.descriptions["Angles"])
+                        if feat in features]
+
+            if tuple_len == 5 and features[0][4] == 'sin':
+                return [ind for ind, feat in
+                        enumerate(self.descriptions["Dihedral_sines"])
+                        if feat in features]
+
+            if tuple_len == 5 and features[0][4] == 'cos':
+                return [ind for ind, feat in
+                        enumerate(self.descriptions["Dihedral_cos"])
+                        if feat in features]
+
         if isinstance(features, str):
             if features not in self.descriptions.keys() and features != 'Bonds':
                 raise RuntimeError(
@@ -614,9 +651,9 @@ class GeometryStatistics():
                 "features must be description string or list of tuples.")
 
 
-class ResidueStatistics(GeometryStatistics):
-    """Child class of GeometryStatistics that calculates statistics on a
-    residue basis
+class ResidueStatistics():
+    """Lightweight class for calculating and organizing per-residue
+    statistics for residue-specific priors.
 
     Parameters
     ----------
@@ -632,52 +669,58 @@ class ResidueStatistics(GeometryStatistics):
         and 3 beads in the second residue (CA, CB, O) might have
         the following beads_per_residue array:
 
-        beads_per_residue = [0, 1, 2, 3, 4, 1, 2, 4]
+            beads_per_residue = [0, 1, 2, 3, 4, 0, 1, 2]
+
+        If an int is supplied instead, it is assumed that each residue
+        contains this same number of beads. For example, if there are 3
+        beads per residue and 4 residues in total, then beads_per_residue
+        will become:
+
+            beads_per_residue = [0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2]
+
+    num_res : int
+        Total number of residues in the molecule.
     beta : float
         inverse temperature, (1/kB*T)
     """
 
-    def __init__(self, encoded_residues, beads_per_residue, beta=1.0)
-        #super(ResidueStatistics, self).__init__(*args, **kwargs) -- No super for now #
-
+    def __init__(self, encoded_residues, beads_per_residue, num_res, beta=1.0):
         self.encoded_residues = encoded_residues
-        self.num_residues = len(encoded_residues)
+        self.num_res = num_res
         self.beta = beta
         if isinstance(beads_per_residue, int):
             self.beads_per_residue = np.tile(np.arange(beads_per_residue),
-                                         self.num_residues)
+                                         self.num_res)
         else:
             self.beads_per_residue = beads_per_residue
 
 
-    def get_stats(self, data, bead_array):
+    def get_stats(self, data, beads):
         """ All bead tuples need to be the same length
 
         Parameters
         ----------
         data: np.array
             input features, of shape [n_examples, n_features]
-        bead_array : np.array
-            input array of beads of shape [n_examples, n_features,
-            n_beads_per_feature]. As such, all features must have
-            the same number of beads. The use of numpy arrays in
-            place of tuples allows for some vectorized operations.
-
+        beads : list of tuples of ints
+            the tuples of beads that described the corresponding
+            features in the data input variable
         """
-        if data.shape != bead_array.shape:
-            raise ValueError("data and bead_tuples must have the "
-                             "the same shape")
+        # change beads into an np.array for easier indexing
+        bead_array = np.array(beads)
 
         # first, we need to label the residue of each bead:
-        residues = self.encoded_residues[:, bead_array]
+        residue_beads = self.encoded_residues[:, bead_array]
 
         # second, we need to change the raw beads into residue-local beads
-        local_beads = self.beads_per_residue[:, bead_array]
+        local_beads = np.repeat(self.beads_per_residue[None, bead_array],
+                                len(residue_beads), 0)
 
         #need something like (local beads, residues) for final labels
-        final_labels = np.concatenate(local_beads, final_beads, axis=1)
+        final_labels = np.concatenate((local_beads, residue_beads), axis=2)
 
         # Next, we assemble the statistics dictionary
+        stats_dict = {}
         for i in range(data.shape[0]):
             for j in range(data.shape[1]):
                 residue_key = tuple(final_labels[i,j,:])
@@ -710,6 +753,39 @@ class ResidueStatistics(GeometryStatistics):
             stats_dict[residue_key]['std'] = np.sqrt(stats_dict[residue_key]['var'])
             stats_dict[residue_key]['k'] = 1.0/stats_dict[residue_key]['var']/self.beta
         return stats_dict
+
+    def get_residue_features(self, data, beads, out_encodings):
+        """Returns all features involved in a(the) specific resiude(s)
+        specified by out_encodings"""
+
+        bead_array = np.array(beads)
+
+        # first, we need to label the residue of each bead:
+        residue_beads = self.encoded_residues[:, bead_array]
+
+        # second, we need to change the raw beads into residue-local beads
+        local_beads = np.repeat(self.beads_per_residue[None, bead_array],
+                                len(residue_beads), 0)
+
+        #need something like (local beads, residues) for final labels
+        final_labels = np.concatenate((local_beads, residue_beads), axis=2)
+
+        # Next, we assemble the statistics dictionary
+        residue_features = {}
+        for encoding in out_encodings:
+            residue_features[encoding] = []
+
+        # grab the features that we need according to encodings
+        # this is not a fast implementation
+        for encoding in out_encodings:
+            for example, labels in zip(data, final_labels):
+                for num, label in enumerate(labels):
+                    if tuple(label) == encoding:
+                        residue_features[encoding].append(example[num])
+
+        for encoding in out_encodings:
+            residue_features[encoding] = np.array(residue_features[encoding])
+        return residue_features
 
 
 def kl_divergence(dist_1, dist_2):

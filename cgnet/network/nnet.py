@@ -4,7 +4,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from .priors import ZscoreLayer, HarmonicLayer, RepulsionLayer
+from .priors import ZscoreLayer, HarmonicLayer, RepulsionLayer, _ResiduePriorLayer, _BeadPriorLayer
 from cgnet.feature import FeatureCombiner, SchnetFeature, GeometryFeature
 
 
@@ -150,7 +150,8 @@ class CGnet(nn.Module):
         self.criterion = criterion
         self.feature = feature
 
-    def forward(self, coordinates, embedding_property=None):
+    def forward(self, coordinates, embedding_property=None,
+                residue_property=None):
         """Forward pass through the network ending with autograd layer.
 
         Parameters
@@ -237,7 +238,14 @@ class CGnet(nn.Module):
                     "Priors may only be used with GeometryFeatures or coordinates."
                 )
             for prior in self.priors:
-                energy = energy + prior(geom_feature[:, prior.callback_indices])
+                if isinstance(prior, _ResiduePriorLayer):
+                    energy = energy + prior(geom_feature[:, prior.callback_indices],
+                                            residue_property)
+                elif isinstance(prior, _BeadPriorLayer):
+                    energy = energy + prior(geom_feature[:, prior.callback_indices],
+                                            embedding_property)
+                else:
+                    energy = energy + prior(geom_feature[:, prior.callback_indices])
         # Sum up energies along bead axis for Schnet outputs and mask out
         # nonexisting beads
         if len(energy.size()) == 3 and isinstance(self.feature, SchnetFeature):
@@ -278,7 +286,8 @@ class CGnet(nn.Module):
                 self.feature.device = device
                 self.feature.geometry.device = device
 
-    def predict(self, coord, force_labels, embedding_property=None):
+    def predict(self, coord, force_labels, embedding_property=None,
+                residue_property=None):
         """Prediction over test/validation batch.
 
         Parameters
@@ -301,6 +310,7 @@ class CGnet(nn.Module):
         self.eval()  # set model to eval mode
         energy, force = self.forward(coord)
         loss = self.criterion.forward(force, force_labels,
-                                      embedding_property=embedding_property)
+                                      embedding_property=embedding_property,
+                                      residue_property=residue_property)
         self.train()  # set model to train mode
         return loss.data

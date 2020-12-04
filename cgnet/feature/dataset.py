@@ -92,9 +92,18 @@ class MoleculeDataset(Dataset):
         Coordinate data of dimension [n_frames, n_beads, n_dimensions]
     forces : np.array
         Coordinate data of dimension [n_frames, n_beads, n_dimensions]
-    embeddings : np.array
+    embeddings : np.array (default: None)
         Embedding data of dimension [n_frames, n_beads, n_embedding_properties]
-        Embeddings must be positive integers.
+        Embeddings must be positive integers. These integers are inputs used
+        to learn representation embeddings and learned features that are fed
+        through interaction blocks of a CGSchNet architecture.
+    residues : np.array (default: None)
+        Residue labels for each bead of dimension [n_frames, n_beads]. Each
+        label must be a positive integer. Note: these labels are not the same
+        as embeddings, and are meant to be used for residue specific priors;
+        they are not used as an input property for a learned
+        embedding/representation, but rather represent static, per-frame residue
+        arrangements of beads for on-the-fly prior parameter determination.
     selection : np.array (default=None)
         Array of frame indices to select from the coordinates and forces.
         If None, all are used.
@@ -105,8 +114,8 @@ class MoleculeDataset(Dataset):
         Default device is the local CPU.
     """
 
-    def __init__(self, coordinates, forces, embeddings=None, selection=None,
-                 stride=1, device=torch.device('cpu')):
+    def __init__(self, coordinates, forces, embeddings=None, residues=None,
+                 selection=None,  stride=1, device=torch.device('cpu')):
         self.stride = stride
 
         self.coordinates = self._make_array(coordinates, selection)
@@ -119,6 +128,14 @@ class MoleculeDataset(Dataset):
         else:
             self.embeddings = None
 
+        if residues is not None:
+            if (np.any(residues < 1) or
+                not np.all(residues.astype(int) == residues)):
+                raise ValueError("Residues must be positive integers.")
+            self.residues = self._make_array(residues, selection)
+        else:
+            self.residues = None
+
         self._check_inputs()
 
         self.len = len(self.coordinates)
@@ -130,13 +147,26 @@ class MoleculeDataset(Dataset):
         be an empty tensor.
         """
         if self.embeddings is None:
-            # Still returns three objects, but the third is an empty tensor
+            # Still returns four objects, but the third/fourth is an empty tensor
             return (
                 torch.tensor(self.coordinates[index],
                              requires_grad=True, device=self.device),
                 torch.tensor(self.forces[index],
                              device=self.device),
+                torch.tensor([]),
                 torch.tensor([])
+            )
+
+        elif self.embeddings is not None and self.residues is not None:
+            return (
+                torch.tensor(self.coordinates[index],
+                             requires_grad=True, device=self.device),
+                torch.tensor(self.forces[index],
+                             device=self.device),
+                torch.tensor(self.embeddings[index],
+                             device=self.device),
+                torch.tensor(self.residues[index],
+                             device=self.device)
             )
         else:
             return (
@@ -145,7 +175,8 @@ class MoleculeDataset(Dataset):
                 torch.tensor(self.forces[index],
                              device=self.device),
                 torch.tensor(self.embeddings[index],
-                             device=self.device)
+                             device=self.device),
+                torch.tensor([])
             )
 
     def __len__(self):
@@ -160,7 +191,8 @@ class MoleculeDataset(Dataset):
         else:
             return data[::self.stride]
 
-    def add_data(self, coordinates, forces, embeddings=None, selection=None):
+    def add_data(self, coordinates, forces, embeddings=None,
+                 residues=None, selection=None):
         """We add data to the dataset with a custom selection and the stride
         specified upon object instantiation, ensuring that the embeddings
         have a shape length of 2, and that everything has the same number
@@ -170,6 +202,8 @@ class MoleculeDataset(Dataset):
         new_forces = self._make_array(forces, selection)
         if embeddings is not None:
             new_embeddings = self._make_array(embeddings, selection)
+        if residues is not None:
+            new_residues = self._make_array(residues, selection)
 
         self.coordinates = np.concatenate(
             [self.coordinates, new_coords], axis=0)
@@ -178,7 +212,9 @@ class MoleculeDataset(Dataset):
         if self.embeddings is not None:
             self.embeddings = np.concatenate([self.embeddings, new_embeddings],
                                              axis=0)
-
+        if self.residues is not None:
+            self.residues = np.concatenate([self.residues, new_residues],
+                                             axis=0)
         self._check_inputs()
 
         self.len = len(self.coordinates)
@@ -204,6 +240,14 @@ class MoleculeDataset(Dataset):
             if self.coordinates.shape[1] != self.embeddings.shape[1]:
                 raise ValueError("Embeddings must have the same number of beads "
                                  "as the coordinates/forces")
+
+        if self.residues is not None:
+            if len(self.residues.shape) != 2:
+                raise ValueError("Residues must have two dimensions")
+
+            if self.coordinates.shape[0] != self.residues.shape[0]:
+                raise ValueError("Residues must have the same number of examples "
+                                 "as coordinates/forces")
 
 
 class MultiMoleculeDataset(Dataset):

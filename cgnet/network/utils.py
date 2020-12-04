@@ -305,7 +305,7 @@ def dataset_loss(model, loader, optimizer=None,
         if optimizer is not None:
             optimizer.zero_grad()
 
-        coords, force, embedding_property = batch_data
+        coords, force, embedding_property, residue_property = batch_data
         if batch_num == 0:
             reference_batch_size = coords.numel()
 
@@ -318,7 +318,8 @@ def dataset_loss(model, loader, optimizer=None,
         if (isinstance(loader.dataset, MultiMoleculeDataset) or
             loader.dataset.embeddings is not None):
             potential, predicted_force = model.forward(coords,
-                                                       embedding_property=embedding_property)
+                                                       embedding_property=embedding_property,
+                                                       residue_property=residue_property)
         else:
             potential, predicted_force = model.forward(coords)
 

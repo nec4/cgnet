@@ -3,6 +3,7 @@
 
 import torch
 import torch.nn as nn
+import numpy as np
 
 class _AbstractPriorLayer(nn.Module):
     """Abstract Layer for definition of priors, which only imposes the minimal
@@ -26,6 +27,49 @@ class _AbstractPriorLayer(nn.Module):
             'forward() method must be overridden in \
             custom classes inheriting from _AbstractPriorLayer()'
                                   )
+
+class _ResiduePriorLayer(_AbstractPriorLayer):
+
+    def __init__(self):
+        super(_AbstractPriorLayer, self).__init__()
+        self.callback_indices = slice(None, None)
+
+    def forward(self, x):
+        """Forward method to compute the prior energy contribution.
+
+        Notes
+        -----
+        This must be explicitly implemented in a child class that inherits from
+        _AbstractPriorLayer(). The details of this method should encompass the
+        mathematical steps to form each specific energy contribution to the
+        potential energy.;
+        """
+        raise NotImplementedError(
+            'forward() method must be overridden in \
+            custom classes inheriting from _AbstractPriorLayer()'
+            )
+
+class _BeadPriorLayer(_AbstractPriorLayer):
+
+    def __init__(self):
+        super(_AbstractPriorLayer, self).__init__()
+        self.callback_indices = slice(None, None)
+
+    def forward(self, x):
+        """Forward method to compute the prior energy contribution.
+
+        Notes
+        -----
+        This must be explicitly implemented in a child class that inherits from
+        _AbstractPriorLayer(). The details of this method should encompass the
+        mathematical steps to form each specific energy contribution to the
+        potential energy.;
+        """
+        raise NotImplementedError(
+            'forward() method must be overridden in \
+            custom classes inheriting from _AbstractPriorLayer()'
+            )
+
 
 class _PriorLayer(_AbstractPriorLayer):
     """Layer for adding prior energy computations external to CGnet hidden
@@ -191,6 +235,56 @@ class RepulsionLayer(_PriorLayer):
         return energy
 
 
+class BeadRepulsionLayer(_BeadPriorLayer):
+
+    def __init__(self, callback_indices, interaction_dictionary,
+                 bead_array):
+        super(BeadRepulsionLayer, self).__init__()
+        self.interaction_dictionary = interaction_dictionary
+        self.bead_array = bead_array
+        self.callback_indices = callback_indices
+        self._generate_lookup_table()
+
+    def _generate_lookup_table(self):
+        """Given an interaction dictionary, generate
+        the lookup table for interactions
+        """
+        repulsion_parameters = torch.tensor([])
+        self.column_lookup = {}
+        for num, (label, interaction) in enumerate(self.interaction_dictionary.items()):
+            # store each interaction as column in the 
+            self.column_lookup[label] = num
+            #print(num, label, interaction)
+            repulsion_parameters = torch.cat((repulsion_parameters,
+                                            torch.tensor([[interaction['ex_vol']],
+                                                          [interaction['exp']]])),
+                                                         dim=1)
+        self.register_buffer('repulsion_parameters', repulsion_parameters)
+
+    def forward(self, in_feat, bead_property):
+        """
+        bead_array : np.array
+            array that contains lookup information for harmonic interactions
+            on a per-example basis. The format is the following:
+
+            [ *beads, *residues ]
+        """
+
+        # lookups
+        lookup_idx = []
+        final_labels = bead_property.cpu().numpy()[:, self.bead_array]
+        for example in final_labels:
+            lookup_idx.append([self.column_lookup[tuple(np.sort(label))]
+                               for label in example])
+
+        n = len(in_feat)
+        energy = torch.sum((self.repulsion_parameters[0, lookup_idx]/in_feat)
+                           ** self.repulsion_parameters[1, lookup_idx],
+                           1).reshape(n, 1) / 2
+        return energy
+
+
+
 class HarmonicLayer(_PriorLayer):
     """Layer for calculating bond/angle harmonic energy prior. Harominc energy
     contributions have the following form:
@@ -292,6 +386,58 @@ class HarmonicLayer(_PriorLayer):
         n = len(in_feat)
         energy = torch.sum(self.harmonic_parameters[0, :] *
                            (in_feat - self.harmonic_parameters[1, :]) ** 2,
+                           1).reshape(n, 1) / 2
+        return energy
+
+
+class ResidueHarmonicLayer(_ResiduePriorLayer):
+
+    def __init__(self, callback_indices, interaction_dictionary,
+                 bead_array, beads_per_residue):
+        super(ResidueHarmonicLayer, self).__init__()
+        self.interaction_dictionary = interaction_dictionary
+        self.bead_array = bead_array
+        self.beads_per_residue = beads_per_residue
+        self.callback_indices = callback_indices
+        self._generate_lookup_table()
+
+    def _generate_lookup_table(self):
+        """Given an interaction dictionary, generate
+        the lookup table for interactions
+        """
+        harmonic_parameters = torch.tensor([])
+        self.column_lookup = {}
+        for num, (label, interaction) in enumerate(self.interaction_dictionary.items()):
+            # store each interaction as column in the 
+            self.column_lookup[label] = num
+            harmonic_parameters = torch.cat((harmonic_parameters,
+                                            torch.tensor([[interaction['k']],
+                                                          [interaction['mean']]])),
+                                                         dim=1)
+        self.register_buffer('harmonic_parameters', harmonic_parameters)
+
+    def forward(self, in_feat, residue_property):
+        """
+        bead_array : np.array
+            array that contains lookup information for harmonic interactions
+            on a per-example basis. The format is the following:
+
+            [ *beads, *residues ]
+        """
+
+        # lookups
+        lookup_idx = []
+        residue_beads = residue_property.cpu().numpy()[:, self.bead_array]
+        local_beads = np.repeat(self.beads_per_residue[None, self.bead_array],
+                                len(residue_beads), 0)
+        final_labels = np.concatenate((local_beads, residue_beads), axis=2)
+        for example in final_labels:
+            lookup_idx.append([self.column_lookup[tuple(label)]
+                               for label in example])
+
+        n = len(in_feat)
+        energy = torch.sum(self.harmonic_parameters[0, lookup_idx] *
+                           (in_feat - self.harmonic_parameters[1, lookup_idx]) ** 2,
                            1).reshape(n, 1) / 2
         return energy
 

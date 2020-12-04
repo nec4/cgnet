@@ -19,6 +19,8 @@ dims = np.random.randint(1, 5)
 
 coords = np.random.randn(frames, beads, dims) # e.g. coords
 forces = np.random.randn(frames, beads, dims) # e.g. forces
+embeddings = np.random.randint(low=1, high=50, size=(frames, beads))
+residues = np.random.randint(low=1, high=20, size=(frames, beads))
 
 # This data is used to test MultiMoleculeDataset methods
 # it consists of random data for n_frames number of molecules
@@ -33,6 +35,8 @@ variable_coords = [np.random.randn(bead, 3)
                    for bead in variable_beads] # random coords for each size
 variable_forces = [np.random.randn(bead, 3)
                    for bead in variable_beads] # random forces for each size
+variable_residues = [np.random.randint(low=1, high=20, size=(bead,))
+                     for bead in variable_beads]
 
 # random embeddings for each size
 variable_embeddings = [np.random.randint(1,
@@ -43,16 +47,20 @@ def test_adding_data():
     # Make sure data is added correctly to a MoleculeDataset
 
     # Build a dataset with all the data
-    ds1 = MoleculeDataset(coords, forces)
+    ds1 = MoleculeDataset(coords, forces, embeddings, residues)
 
     # Build a dataset with the first half of the data...
-    ds2 = MoleculeDataset(coords, forces, selection=np.arange(frames//2))
+    ds2 = MoleculeDataset(coords, forces, embeddings, residues,
+                          selection=np.arange(frames//2))
     # ... then add the second half afterward
-    ds2.add_data(coords, forces, selection=np.arange(frames//2, frames))
+    ds2.add_data(coords, forces, embeddings, residues,
+                 selection=np.arange(frames//2, frames))
 
     # Make sure they're the same
     np.testing.assert_array_equal(ds1.coordinates, ds2.coordinates)
     np.testing.assert_array_equal(ds1.forces, ds2.forces)
+    np.testing.assert_array_equal(ds1.embeddings, ds2.embeddings)
+    np.testing.assert_array_equal(ds1.residues, ds2.residues)
 
 def test_adding_variable_selection():
     # Make sure data is added correctly to a MultiMoleculeDataset
@@ -78,13 +86,18 @@ def test_stride():
     # Make sure MoleculeDataset stride returns correct results
 
     stride = np.random.randint(2, 5)
-    ds = MoleculeDataset(coords, forces, stride=stride)
+    ds = MoleculeDataset(coords, forces, embeddings, residues,
+                         stride=stride)
 
     strided_coords = coords[::stride]
     strided_forces = forces[::stride]
+    strided_embeddings = embeddings[::stride]
+    strided_residues = residues[::stride]
 
     np.testing.assert_array_equal(ds.coordinates, strided_coords)
     np.testing.assert_array_equal(ds.forces, strided_forces)
+    np.testing.assert_array_equal(ds.embeddings, strided_embeddings)
+    np.testing.assert_array_equal(ds.residues, strided_residues)
 
 
 def test_variable_stride():
@@ -106,25 +119,29 @@ def test_variable_stride():
 
 
 def test_indexing():
-    # Make sure MoleculeDataset indexing works (no embeddings)
+    # Make sure MoleculeDataset indexing works
 
     # Make a random slice with possible repeats
     selection = [np.random.randint(frames)
                  for _ in range(np.random.randint(frames))]
-    ds = MoleculeDataset(coords, forces)
+    ds = MoleculeDataset(coords, forces, embeddings, residues)
 
     coords_tensor_from_numpy = torch.from_numpy(coords[selection])
     forces_tensor_from_numpy = torch.from_numpy(forces[selection])
-    # The third argument is an empty tensor because no embeddings have been
-    # specified
-    coords_tensor_from_ds, forces_tensor_from_ds, empty_tensor = ds[selection]
+    embeddings_tensor_from_numpy = torch.from_numpy(embeddings[selection])
+    residues_tensor_from_numpy = torch.from_numpy(residues[selection])
+    (coords_tensor_from_ds, forces_tensor_from_ds,
+         embeddings_tensor_from_ds, residues_tensor_from_ds) = ds[selection]
 
     assert coords_tensor_from_ds.requires_grad
     np.testing.assert_array_equal(coords_tensor_from_numpy,
                                   coords_tensor_from_ds.detach().numpy())
     np.testing.assert_array_equal(forces_tensor_from_numpy,
                                   forces_tensor_from_ds.detach().numpy())
-    assert len(empty_tensor) == 0
+    np.testing.assert_array_equal(embeddings_tensor_from_numpy,
+                                  embeddings_tensor_from_ds.detach().numpy())
+    np.testing.assert_array_equal(residues_tensor_from_numpy,
+                                  residues_tensor_from_ds.detach().numpy())
 
 
 def test_variable_indexing():
@@ -142,15 +159,6 @@ def test_variable_indexing():
 
     data = ds[selection]
     np.testing.assert_array_equal(manual_data, data)
-
-def test_embedding_shape():
-    # Test shape of multidimensional embeddings
-    embeddings = np.random.randint(1, 10, size=(frames, beads))
-
-    ds = MoleculeDataset(coords, forces, embeddings)
-
-    assert ds[:][2].shape == (frames, beads)
-    np.testing.assert_array_equal(ds.embeddings, embeddings)
 
 
 def test_multi_molecule_collate():
