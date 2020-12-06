@@ -756,7 +756,19 @@ class ResidueStatistics():
 
     def get_residue_features(self, data, beads, out_encodings):
         """Returns all features involved in a(the) specific resiude(s)
-        specified by out_encodings"""
+        specified by out_encodings
+
+        Parameters
+        ----------
+        data : np.array
+            input data features. These must be of shape (n_frames, n_features),
+            such as distances, angles, or dihedrals
+        beads : list of tuples of ints
+            bead tuples that should be considered for calculating
+            features of a specific residue type
+        out_encodings : np.array
+            The desired residue types from which features should be extracted
+        """
 
         bead_array = np.array(beads)
 
