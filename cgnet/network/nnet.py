@@ -162,6 +162,9 @@ class CGnet(nn.Module):
             Some property that should be embedded. Can be nuclear charge
             or maybe an arbitrary number assigned for amino-acids.
             Size [n_frames, n_properties]
+        residue_property: torch.Tensor (default=None)
+            Residue property that can be used for residue-specific prior
+            interactions. Size [n_frames, n_beads]
 
         Returns
         -------
@@ -300,6 +303,11 @@ class CGnet(nn.Module):
             Some property that should be embedded. Can be nuclear charge
             or maybe an arbitrary number assigned for amino-acids.
             Size [n_frames, n_properties]
+        residue_property: torch.Tensor (default=None)
+            Residue property that can be used for residue-specific prior
+            interactions. Size [n_frames, n_beads]
+
+
         Returns
         -------
         loss.data : torch.Tensor

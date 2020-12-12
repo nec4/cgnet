@@ -29,6 +29,16 @@ class _AbstractPriorLayer(nn.Module):
                                   )
 
 class _ResiduePriorLayer(_AbstractPriorLayer):
+    """Layer for adding residue-specific prior energy computations external to
+    CGnet hidden output
+
+    Parameters
+    ----------
+    callback_indices: list of int
+
+        indices used to access a specified subset of outputs from the feature
+        layer through a residual connection
+    """
 
     def __init__(self):
         super(_AbstractPriorLayer, self).__init__()
@@ -50,6 +60,16 @@ class _ResiduePriorLayer(_AbstractPriorLayer):
             )
 
 class _BeadPriorLayer(_AbstractPriorLayer):
+    """Layer for adding bead-specific prior energy computations external to
+    CGnet hidden output
+
+    Parameters
+    ----------
+    callback_indices: list of int
+
+        indices used to access a specified subset of outputs from the feature
+        layer through a residual connection
+    """
 
     def __init__(self):
         super(_AbstractPriorLayer, self).__init__()
@@ -78,6 +98,7 @@ class _PriorLayer(_AbstractPriorLayer):
     Parameters
     ----------
     callback_indices: list of int
+
         indices used to access a specified subset of outputs from the feature
         layer through a residual connection
 
@@ -236,6 +257,32 @@ class RepulsionLayer(_PriorLayer):
 
 
 class BeadRepulsionLayer(_BeadPriorLayer):
+    """A prior layer capable of calculating bead-specific
+    repulsion interactions.
+
+    Parameters
+    ----------
+    callback_indices: list of int
+        indices used to access a specified subset of outputs from the feature
+        layer through a residual connection
+    interaction_dictionary: dictionary
+        Dictionary of residue specific interactions. The keys of this dictionary
+        are tuples of the following structure:
+
+            (bead 1 type, bead 2 type)
+
+        where bead types refer to the integer index embedding property of the beads.
+        The values of the dictionary are dictionaries that contain the parameters
+        of thar harmonic interaction:
+
+            {'ex_vol' : float, 'exp' : float}
+
+        where 'ex_vol' is the excluded volume and 'exp' is the exponent of the interaction
+    bead_array: np.array
+        array of shape [num_interactions, 2], where each row contains an array of
+        the bead indices involved in that harmonic interaction. In other words,
+        this is the output of np.array() called on the list of bead tuples.
+    """
 
     def __init__(self, callback_indices, interaction_dictionary,
                  bead_array):
@@ -263,11 +310,20 @@ class BeadRepulsionLayer(_BeadPriorLayer):
 
     def forward(self, in_feat, bead_property):
         """
-        bead_array : np.array
-            array that contains lookup information for harmonic interactions
-            on a per-example basis. The format is the following:
+        Parameters
+        ----------
+        in_feat: torch.Tensor
+            input features, such as pairwise distances, of size (n,k), for
+            n examples and k features.
+        bead_property : torch.Tensor
+            embedding properties for each bead in the molecule, of shape
+            [num_examples, num_beads]
 
-            [ *beads, *residues ]
+        Returns
+        -------
+        energy : torch.Tensor
+            total residue-specific harmonic energy contributions, of shape
+            [num_examples, 1]
         """
 
         # lookups
@@ -391,7 +447,40 @@ class HarmonicLayer(_PriorLayer):
 
 
 class ResidueHarmonicLayer(_ResiduePriorLayer):
+    """A prior layer capable of calculating residue-specific
+    harmonic interactions.
 
+    Parameters
+    ----------
+    callback_indices: list of int
+        indices used to access a specified subset of outputs from the feature
+        layer through a residual connection
+    interaction_dictionary: dictionary
+        Dictionary of residue specific interactions. The keys of this dictionary
+        are tuples of the following structure:
+
+            (bead 1 index, bead 2 index, bead 1 residue, bead 2 residue)
+
+        where bead indices refer to the integer index of the bead in the CG
+        molecule and bead residues are integers that denote the residue that the
+        bead resides in. The values of the dictionary are dictionaries that contain
+        the parameters of thar harmonic interaction:
+
+            {'mean' : float, 'k' : float}
+
+        where 'mean' is the harmonic mean and 'k' is the strength of the interaction
+    bead_array: np.array
+        array of shape [num_interactions, 2], where each row contains an array of
+        the bead indices involved in that harmonic interaction. In other words,
+        this is the output of np.array() called on the list of bead tuples.
+    beads_per_residue: np.array
+        array of integers that represent the local indices of each bead on a
+        per residue basis. For example, for a CG molecule that has 3 residues and
+        4 beads per residue would have the following beads_per_residue:
+
+            [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
+
+    """
     def __init__(self, callback_indices, interaction_dictionary,
                  bead_array, beads_per_residue):
         super(ResidueHarmonicLayer, self).__init__()
@@ -418,11 +507,20 @@ class ResidueHarmonicLayer(_ResiduePriorLayer):
 
     def forward(self, in_feat, residue_property):
         """
-        bead_array : np.array
-            array that contains lookup information for harmonic interactions
-            on a per-example basis. The format is the following:
+        Parameters
+        ----------
+        in_feat: torch.Tensor
+            input features, such as pairwise distances, of size (n,k), for
+            n examples and k features.
+        residue_property : torch.Tensor
+            residue properties for each bead in the molecule, of shape
+            [num_examples, num_beads]
 
-            [ *beads, *residues ]
+        Returns
+        -------
+        energy : torch.Tensor
+            total residue-specific harmonic energy contributions, of shape
+            [num_examples, 1]
         """
 
         # lookups
@@ -523,12 +621,19 @@ class PriorForceComputer(nn.Module):
         coords: torch.tensor
             input coordinates for calculating forces, of shape
             [num_examples, num_beads, 3]
-        embeddings: torch.tensor
+        embedding_property: torch.tensor
             input embeddings in the case that there are priors
-            that require embeddings, such as an EmbeddingHarmonicLyaer
+            that require embeddings, such as an BeadRepulsionLayer
+        residue_property: torch.tensor
+            input residue properties for each bead in the case that
+            there are priors that require residue information, such
+            as a ResidueHarmonicLayer
 
         Returns
         -------
+        energy: torch.tensor
+            total enrgy computed for all of the priors in the supplied
+            prior list, of shape [num_examples, 1]
         forces: torch.tensor
             forces derived from the total prior energy from all the
             supplied priors, of shape [num_examples, num_beads, 3]
