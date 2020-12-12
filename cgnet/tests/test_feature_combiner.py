@@ -10,12 +10,14 @@ from cgnet.network import (CGnet, ForceLoss, HarmonicLayer, ZscoreLayer,
                            Simulation)
 
 
-def _get_random_schnet_feature(calculate_geometry=False):
+def _get_random_schnet_feature(n_beads, calculate_geometry=False):
     """ Helper function for producing SchnetFeature instances with
     random initializaitons
 
     Parameters
     ----------
+    n_beads : int
+        The number of beads in the SchnetFeature
     calculate_geometry : bool (default=False)
         specifies whether or not the returned SchnetFeature should
         calculate pairwise distances
@@ -134,7 +136,7 @@ def test_combiner_schnet_feature():
     # That is capable of calculating pairwise distances (calculate_geometry
     # is True)
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-        calculate_geometry=True)
+        n_beads, calculate_geometry=True)
     layer_list = [schnet_feature]
     feature_combiner = FeatureCombiner(layer_list)
 
@@ -156,7 +158,7 @@ def test_combiner_schnet_in_cgnet():
     # That is capable of calculating pairwise distances (calculate_geometry
     # is True)
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-        calculate_geometry=True)
+        n_beads, calculate_geometry=True)
     layer_list = [schnet_feature]
     feature_combiner = FeatureCombiner(layer_list)
 
@@ -243,7 +245,7 @@ def test_combiner_full():
     # Test the combination of GeometryFeature, SchnetFeature,
     # amd priors in a CGnet class
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-                                                          calculate_geometry=False)
+                                                  n_beads, calculate_geometry=False)
     layer_list = [geometry_feature, zscore_layer, schnet_feature]
     # grab distance indices
     dist_idx = geom_stats.return_indices('Distances')
@@ -274,7 +276,7 @@ def test_cgschnet_simulation_shapes():
     # Test simulation with embeddings and make sure the shapes of
     # the simulated coordinates, forces, and potential are correct
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-                                                           calculate_geometry=True)
+                                                   n_beads, calculate_geometry=True)
     layer_list = [schnet_feature]
     feature_combiner = FeatureCombiner(layer_list)
 
@@ -305,7 +307,7 @@ def test_feature_combiner_shapes():
                                             n_beads=n_beads)
 
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-                                                          calculate_geometry=False)
+                                                    n_beads, calculate_geometry=False)
     layer_list = [full_geometry_feature, schnet_feature]
     # grab distance indices
     dist_idx = geom_stats.return_indices('Distances')
@@ -345,7 +347,7 @@ def test_combiner_shape_with_geometry_propagation():
                                             n_beads=n_beads)
 
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-                                                          calculate_geometry=False)
+                                                   n_beads, calculate_geometry=False)
     layer_list = [full_geometry_feature, schnet_feature]
     # grab distance indices
     dist_idx = geom_stats.return_indices('Distances')
@@ -393,7 +395,7 @@ def test_combiner_output_with_geometry_propagation():
                                             n_beads=n_beads)
     # Here we generate a random schent feature that does not calculate geometry
     schnet_feature, embedding_property, feature_size = _get_random_schnet_feature(
-                                                          calculate_geometry=False)
+                                                    n_beads, calculate_geometry=False)
     # grab distance indices
     dist_idx = geom_stats.return_indices('Distances')
 

@@ -415,6 +415,7 @@ class SchnetFeature(nn.Module):
         # non-physical distances, energies, and other properties propgated
         # through the network that might ultimately add non-physical contributions
         # to the loss function used during training
+
         bead_mask = torch.clamp(embedding_property, min=0, max=1).float()
 
         # A similar mask is made to mask the distances in redundant form

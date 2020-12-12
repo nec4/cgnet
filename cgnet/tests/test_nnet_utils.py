@@ -449,7 +449,7 @@ def test_dataset_loss_with_optimizer():
 
         for batch_num, batch_data in enumerate(nonrandom_loader):
             optimizer_manual.zero_grad()
-            coord, force, embedding_property = batch_data
+            coord, force, embedding_property, residue_property = batch_data
 
             if batch_num == 0:
                 ref_batch_size = coord.numel()
@@ -516,7 +516,7 @@ def test_dataset_loss_with_optimizer_and_regularization():
 
         for batch_num, batch_data in enumerate(nonrandom_loader):
             optimizer_manual.zero_grad()
-            coord, force, embedding_property = batch_data
+            coord, force, embedding_property, residue_property = batch_data
 
             if batch_num == 0:
                 ref_batch_size = coord.numel()
