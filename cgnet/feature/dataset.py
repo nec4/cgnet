@@ -23,9 +23,10 @@ def multi_molecule_collate(input_dictionaries, device=torch.device('cpu')):
         This is the input list of *unpadded* input data. Each example in the
         list is a dictionary with the following key/value pairs:
 
-            'coords' : np.array of shape (1, num_beads, 3)
-            'forces' : np.array of shape (1, num_beads, 3)
-            'embed'  : np.array of shape (num_beads)
+            'coords'   : np.array of shape (1, num_beads, 3)
+            'forces'   : np.array of shape (1, num_beads, 3)
+            'embed'    : np.array of shape (num_beads)
+            'residues' : np.array of shape (num_beads)
 
         Embeddings must be specified for this function to work correctly.
         A KeyError will be raised if they are not.
@@ -34,23 +35,23 @@ def multi_molecule_collate(input_dictionaries, device=torch.device('cpu')):
     -------
     batch : tuple of torch.tensors
         All the data in the batch, padded according to the largest system
-        in the batch. The orer of tensors in the tuple is the following:
+        in the batch. The order of tensors in the tuple is the following:
 
-            coords, forces, embedding_property = batch
+            coords, forces, embedding_property, residue_property = batch
 
         All examples are right-padded with zeros. For example, if the
         maximum bead size in list of examples is 8, the embedding array
         for an example from a molecule composed of 3 beads will be padded
         from:
 
-            upadded_embedding = [1, 2, 5]
+            unpadded_embedding = [1, 2, 5]
 
         to:
 
             padded_embedding = [1, 2, 5, 0, 0, 0, 0, 0]
 
-        An analogous right-aligned padding is done for forces and
-        coordinates.
+        An analogous right-aligned padding is done for forces, coordinates,
+        and residues.
 
     Notes
     -----
@@ -80,7 +81,11 @@ def multi_molecule_collate(input_dictionaries, device=torch.device('cpu')):
     embeddings = pad_sequence([torch.tensor(example['embeddings'], device=device)
                                for example in input_dictionaries],
                                batch_first=True)
-    return coordinates, forces, embeddings
+    residues = pad_sequence([torch.tensor(example['residues'], device=device)
+                               for example in input_dictionaries],
+                               batch_first=True)
+
+    return coordinates, forces, embeddings, residues
 
 
 class MoleculeDataset(Dataset):
@@ -232,6 +237,10 @@ class MultiMoleculeDataset(Dataset):
         of shape [n_beads_i], containing the bead embeddings of a
         single frame for molecule i. The embedding_list may not be None;
         MultiMoleculeDataset is only compatible with SchnetFeatures.
+    residue_list: list of numpy.arrays or None (default=None)
+        List of residue identities for each bead. Each item i in the list
+        must be a numpy array of shape [n_beads_i], containing the bead
+        residue types of a single frame for molecule i.
 
     Attributes
     ----------
@@ -242,6 +251,7 @@ class MultiMoleculeDataset(Dataset):
             'coords' : np.array of size [n_beads_i, 3]
             'forces' : np.array of size [n_beads_i, 3]
             'embed'  : np.array of size [n_beads_i]
+            'residue'  : np.array of size [n_beads_i]
 
     Example
     -------
@@ -254,14 +264,17 @@ class MultiMoleculeDataset(Dataset):
     """
 
     def __init__(self, coordinates_list, forces_list, embeddings_list,
-                 selection=None, stride=1, device=torch.device('cpu')):
+                 residue_list=None, selection=None, stride=1,
+                 device=torch.device('cpu')):
         self._check_inputs(coordinates_list, forces_list,
-                           embeddings_list=embeddings_list)
+                           embeddings_list=embeddings_list,
+                           residue_list=residue_list)
         self.stride = stride
         self.data = None
 
         self._make_array_data(coordinates_list, forces_list,
                               embeddings_list=embeddings_list,
+                              residue_list=residue_list,
                               selection=selection)
         self.len = len(self.data)
 
@@ -278,7 +291,7 @@ class MultiMoleculeDataset(Dataset):
         return self.len
 
     def _make_array_data(self, coordinates_list, forces_list,
-                         embeddings_list, selection=None):
+                         embeddings_list, residue_list=None, selection=None):
         """Assemble the NumPy arrays into a list of individual dictionaries for
         use with the multi_molecule_collate function.
         """
@@ -289,21 +302,31 @@ class MultiMoleculeDataset(Dataset):
             coordinates = [coordinates_list[i] for i in selection]
             forces = [forces_list[i] for i in selection]
             embeddings = [embeddings_list[i] for i in selection]
-            for coord, force, embed in zip(coordinates[::self.stride],
-                                           forces[::self.stride],
-                                           embeddings[::self.stride]):
+
+            if residue_list is not None:
+                residues = [residue_list[i] for i in selection]
+            else:
+                residues = [None for i in selection]
+
+            for coord, force, embed, residue in zip(coordinates[::self.stride],
+                                              forces[::self.stride],
+                                              embeddings[::self.stride],
+                                              residues[::self.stride]):
                 self.data.append({
-                    "coords" : coord, "forces" : force, "embeddings" : embed})
+                    "coords" : coord, "forces" : force,
+                    "embeddings" : embed, "residues" : residue})
         else:
-            for coord, force, embed in zip(coordinates_list[::self.stride],
+            for coord, force, embed, residue in zip(coordinates_list[::self.stride],
                                            forces_list[::self.stride],
                                            embeddings_list[::self.stride]):
+                                              residues[::self.stride]):
                 self.data.append({
-                    "coords" : coord, "forces" : force, "embeddings" : embed})
+                    "coords" : coord, "forces" : force,
+                    "embeddings" : embed, "residues" : residue})
 
 
     def add_data(self, coordinates_list, forces_list, embeddings_list,
-                 selection=None):
+                 residue_list=None, selection=None):
         """We add data to the dataset with a custom selection and the stride
         specified upon object instantiation, ensuring that the embeddings
         have a shape length of 1, and that everything has the same number
@@ -315,7 +338,8 @@ class MultiMoleculeDataset(Dataset):
                               embeddings_list=embeddings_list, selection=selection)
         self.len = len(self.data)
 
-    def _check_inputs(self, coordinates_list, forces_list, embeddings_list):
+    def _check_inputs(self, coordinates_list, forces_list,
+                      embeddings_list, residues_list=None):
         """Helper function for ensuring data has the correct shape when
         adding examples to a MultiMoleculeDataset. This function also checks to
         to make sure that no embeddings are 0.
@@ -324,17 +348,20 @@ class MultiMoleculeDataset(Dataset):
         if embeddings_list is None:
             raise ValueError("Embeddings must be supplied, as MultiMoleculeDataset"
                              " is intended to be used only with SchNet utilities.")
+        if residues_list is None:
+            raise ValueError("Residues must be supplied, as MultiMoleculeDataset"
+                             " is intended to be used only with SchNet utilities.")
         else:
             for embedding in embeddings_list:
                 if np.any(embedding < 1):
                     raise ValueError("Embeddings must be positive integers.")
 
-        if not (len(coordinates_list) == len(forces_list) == len(embeddings_list)):
+        if not (len(coordinates_list) == len(forces_list) == len(embeddings_list) == len(residue_lists)):
             raise ValueError("Coordinates, forces, and embeddings lists must "
                              " contain the same number of examples")
 
-        for idx, (coord, force, embed) in enumerate(zip(coordinates_list, forces_list,
-                                                        embeddings_list)):
+        for idx, (coord, force, embed, residue) in enumerate(zip(coordinates_list, forces_list,
+                                                        embeddings_list, residues_list)):
             if coord.shape != force.shape:
                 raise ValueError("Coordinates and forces must have equal shapes at example", idx)
 
@@ -343,6 +370,13 @@ class MultiMoleculeDataset(Dataset):
 
             if len(embed.shape) != 1:
                 raise ValueError("Embeddings must have one dimension at example", idx)
+
+            if len(residue.shape) != 1:
+                raise ValueError("Embeddings must have one dimension at example", idx)
+
+            if len(residue) != len(residue):
+                raise ValueError("Embeddings and residue properties must have the same length at"
+                                 " example", idx)
 
             if coord.shape[0] != embed.shape[0]:
                 raise ValueError("Embeddings must have the same number of beads "
